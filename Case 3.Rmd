@@ -1,0 +1,220 @@
+---
+title: "Case 3"
+output: pdf_document
+---
+# Case 3
+
+### Forbredelsene til oppgavene: 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+```
+
+### Laster ned nødvendig pakker
+```{r}
+library(tidyverse)
+library(data.table)
+library(cowplot)
+library(corrr)
+library(readxl)
+library(httr)
+```
+
+### Henter co2 data:
+```{r}
+co2 <- fread("https://github.com/owid/co2-data/raw/master/owid-co2-data.csv")
+codebook <- fread("https://github.com/owid/co2-data/raw/master/owid-co2-codebook.csv")
+with(co2, table(country))
+
+```
+
+### Fjerner alle samlekategorier og regioner, og tar vare på dara fra enkelte land. Variabelen Co2 er målt i millioner tonn, beregner gjennomsnittlig Co2 utslipp per lane per år.
+
+```{r}
+co2 <- 
+  co2 %>%
+  filter(country %in% c("Africa", "Asia", "Asia (excl. China & India)",
+                        "Europe", "EU-27", "EU-28", "Europe (excl. EU-28)",
+                        "Europe (excl. EU-27)", "Oceania", "North America",
+                        "North America (excl. USA)", "Panama Canal Zone",
+                        "South America", "International transport",
+                        "Kuwaiti Oil Fires") == FALSE) %>% 
+  select(year, co2) %>% 
+  group_by(year) %>% 
+  summarise(co2 = mean(co2, na.rm = TRUE)) %>% 
+  ungroup()
+head(co2)
+```
+
+### BNP per capita henta fra Maddison Project Darabase 2020, benytter kode som laster datafila direkte fra kilde som en temoprær fil.
+
+```{r}
+url <- "https://www.rug.nl/ggdc/historicaldevelopment/maddison/data/mpd2020.xlsx"
+GET(url, write_disk(tmpfi <- tempfile(fileext = ".xlsx")))
+
+mpd2020 <- read_excel(tmpfi, sheet = "Full data")
+head(mpd2020)
+
+```
+
+### Beregner gjennomsnittlig BNP per capita per år for alle landene i tabllen:
+```{r}
+gdp <- 
+  mpd2020 %>% 
+  select(year, gdppc) %>% 
+  filter(year >= 1750) %>% 
+  group_by(year) %>% 
+  summarise(bnp_pc = mean(gdppc, na.rm = TRUE)) %>% 
+  ungroup()
+head(gdp)
+```
+
+### Laster ned temperaturdata, som er medianverdien per år for et ensemble av 100 målinger:
+
+
+```{r}
+temp <- fread("https://www.metoffice.gov.uk/hadobs/hadcrut4/data/current/time_series/HadCRUT.4.6.0.0.annual_ns_avg.txt")
+```
+
+### Gir variablene nye navn:
+```{r}
+temp <- 
+  temp %>% select(V1, V2) %>% 
+  rename(year = V1, tempratur = V2)
+head(temp)
+```
+
+### Slår sammen de tre datasettene:
+```{r}
+left_join(co2, gdp, by="year") %>% 
+  left_join(., temp, by="year") -> dframe
+dframe <- 
+  dframe %>% filter(year>=1850)
+head(dframe)
+```
+
+### Lager en plot av de tre tidsseriene, benytter cowplot::plot_grid() for å arrangere de tre figurene ved siden av hverandre
+
+```{r}
+p1 <- 
+  dframe %>% 
+  ggplot(aes(x=year, y=bnp_pc)) +
+  geom_line(lwd=1, col="dark red") + 
+  labs(x = " ", 
+       y = "Bruttonasjonalprodukt (US$) oer capita") + 
+  theme_bw()
+
+p2 <- 
+  dframe %>% 
+  ggplot(aes(x=year, y=co2)) + 
+  geom_line(lwd=1, col="dark green") +
+  labs(x = " ") +
+  theme_bw()
+
+p3 <- dframe %>% 
+  ggplot(aes(x=year, y=tempratur)) +
+  geom_line(lwd=0.6, col="red") +
+  labs (x = " ") +
+  theme_bw()
+
+plot_grid(p1, p2, p3, ncol = 3, labels = "AUTO")
+```
+
+### Korrelasjonen mellom de ulike tidsseriene kan beregnes:
+```{r}
+dframe %>% 
+  select(-year) %>% 
+  correlate(diagonal = 1) %>% 
+  fashion(decimals = 3)
+
+```
+
+\newpage
+## Oppgave 1:
+### Med hver grad som øker, så ser man en drastisk endring i BNP per capita. 
+```{r}
+dframe %>% 
+ ggplot(aes(x= bnp_pc, y=tempratur)) + geom_point() + theme_bw()
+```
+
+### Med Hver grad som øker, så ser man at Co2 øker det nesten 3 gangen.
+```{r}
+dframe %>% 
+  ggplot(aes(x= co2, y=tempratur)) + geom_point() + theme_bw()
+```
+
+\newpage
+## Oppgave 2:
+
+```{r}
+dframe1 <- dframe[1:101, ]
+#tempratur og BNP_pc før og etter 1950:
+
+dframe2 <- dframe[101:170, ]
+#Co2 og tempratur før og etter 1950: 
+dframe1 %>% 
+  select(-year) %>% 
+  correlate(diagonal = 1) %>% 
+  fashion(decimals = 3)
+```
+
+### Korrelasjonen mellom variablene er størst etter 1950, altså andre del av dataene.
+
+```{r}
+dframe2 %>% 
+  select(-year) %>% 
+  correlate(diagonal = 1) %>% 
+  fashion(decimals = 3)
+#Korrelasjonen mellom variablene er størst etter 1950, altså andre del av dataene. 
+```
+
+\newpage
+### Forbredelse til oppgave 3:  
+
+```{r}
+
+#modell 1: hele perioden
+library(mosaic)
+fit1 <- lm(co2 ~ log(bnp_pc), data = dframe)
+fit1
+
+plotModel(fit1)
+
+#modell 2: før 1950
+fit2 <- lm(co2 ~ log(bnp_pc), data = filter(dframe, year < 1950))
+plotModel(fit2)
+
+#modell 3: etter 1950: 
+fit3 <- lm(co2 ~ log(bnp_pc), data = filter(dframe, year >= 1950))
+fit3
+plotModel(fit3)
+
+#modell 4: begge periodene i samme modell: 
+dframe <- dframe %>% 
+  mutate(y1950 = year >= 1950)
+fit4 <- lm(co2 ~ log(bnp_pc)*y1950, data = dframe)
+fit4
+plotModel(fit4)
+
+```
+
+\newpage
+
+# Oppgave 3: 
+
+```{r}
+dframe %>% 
+  ggplot(aes(x=co2, y=tempratur)) + 
+  geom_point() + theme_bw()
+
+fit5 <- lm(tempratur ~ co2, data = dframe)
+plotModel(fit5)
+
+```
+
+### Dette viser at jo mer BNP øker, jo mer blir produsert og kjøpt, som gjør at det blir mer Co2 utslipp, som igjen øker tempraturen. 
+
+
+
+
