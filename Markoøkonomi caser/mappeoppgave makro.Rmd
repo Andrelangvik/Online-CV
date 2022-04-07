@@ -1,0 +1,216 @@
+---
+title: "Mappeoppgave 1"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+author: "Andre Ydstebø Langvik, Mathias Hetland, Nikolay Lekhmus"
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 2
+---
+
+\newpage
+# Introduksjon:
+
+**Kraftmarkedet har siden januar 2021 hatt en voldsom stigning på prisen for strøm/energi, og  det er en veldig sammensatt grunn for at dette har skjedd, noe som har en stor konsekvens for store deler av innbyggerne i landet. Norge inngår i et integrert nordisk kraftmarked som har gitt et styrket forsyningkapasitet, redusert kostnader og mer fornybar kraftproduksjon. Kraftprisen påvirkes av en rekke faktorer som tilbud og etterspørsel, og faktorer som er menneskestyrt (f.eks. avgifter) og naturstyrte (f.eks. nedbørsmengde).**  [^1](Energi Norge, 2022) 
+**Kraftprisen i Norden med det nordiske markedet blir kontinuerlig påvirket av etterspørselen og tilbudet av kraft. Kraftutvekslingen er organisert på den måten at produksjon skjer i landet der det er billigst å produsere strømmen og, går der den har størst verdi, og gjør det mulig å dra gjensidig nytte av forskjeller i naturressurser, forbruksmønstre og produksjonssystemer.Norge er delt i fem ulike prisområder med utgangspunktet hvor stor nettkapasitet det er mellom de ulike områdene.**
+
+**Europa har ikke samme tilgang til naturressurser for å få fornybarenergi som Norge og vil derfor kutte så mye de kan av fossilbrensel med ren energi fra land med ren energi gjennom energitransaksjoner. Dette gir et presset norsk marked som resultere til en voldsom prisvekst på norske varer og tjenester siden dyrere kraftregning gir en økning i kostnad for bedriftensin og det bli dyrere for konsumentene å kjøpe produkter/tjenester. Dette indirekte birdraget fra kraftprisen sin side vil da presse opp lønninger i det offentlige og private for å ikke tape kjøpskraft.**
+
+**Konsumprisindeksen er en indeks som blir brukt til å beskrive prisutviklingen av tjenester og varer som er etterspurt av private husholdninger i Norge. Indeksen blir brukt til å måle inflasjonen, altså prisstigningen på tjenester og varer som blir konsumert i landet. dvs. At inflasjonen er det stigning i det generelle prisnivået, som vil si at pengens verdi faller fordi man får mindre enn før for en bestemt pengesum. Teorien bak inflasjon er at det er en funksjon av mengden varer og tjenester målt i markedets samlede tilgang på penger, og en økning i pengemengde utover produksjonen vil da være en årsak til inflasjon.** 
+
+\newpage
+
+# 5.1 Konsumprisindeks: Direkte bidrag
+```{r setup, warning=FALSE, message=FALSE}
+
+library(rjstat)
+library(tidyverse)
+library(httr)
+library(janitor)
+library(lubridate)
+library(scales)
+library(ggthemes)
+
+# Hente Url
+options(encoding="UTF-8")
+url <- "https://data.ssb.no/api/v0/no/table/03013/"
+
+tot.indeks <- '
+{"query": [{"code": "Konsumgrp","selection": 
+{"filter": "vs:CoiCop2016niva1","values": 
+["TOTAL"]}}],"response": {"format": "json-stat2"}}
+'
+tot.indeks <- POST(url , body = tot.indeks, encode = "json", verbose())
+tot.indeks <- fromJSONstat(content(tot.indeks, "text")) 
+
+# data for hovedgruppe
+hov.gruppe <- '
+{"query": 
+[{"code": "Konsumgrp","selection": 
+{"filter": "vs:CoiCop2016niva3","values": ["01.1","01.2","02.1","02.2","03.1",
+"03.2","04.1","04.2",
+"04.3","04.4","04.5","05.1","05.2","05.3","05.4","05.5","05.6",
+"06.1","06.2","07.1","07.2","07.3","08.1","08.2","08.3","09.1","09.2","09.3",
+"09.4","09.5","09.6","11.1","11.2","12.1","12.3","12.4","12.5",
+"12.6","12.7"]}}],"response": 
+{"format": "json-stat2"}}
+'
+hov.gruppe <- POST(url , body = hov.gruppe, encode = "json", verbose())
+hov.gruppe <- fromJSONstat(content(hov.gruppe, "text")) 
+
+
+```
+
+
+## Plot 1
+
+```{r, warning=FALSE, message=FALSE}
+# endre litt hov.gruppe
+hov.gruppe <- hov.gruppe %>% 
+  pivot_wider(names_from = statistikkvariabel) %>% 
+  mutate(`Konsumprisindeks (vekter)` = (`Konsumprisindeks (vekter)`/1000)) %>%  
+  mutate(bidrag = `Konsumprisindeks (vekter)`*`Konsumprisindeks (2015=100)`) 
+hov.gruppe <- hov.gruppe %>% group_by(måned) %>% mutate(konsturert_indeks = sum(bidrag)) %>% 
+  pivot_longer(cols = 3:8) %>% rename(statistikkvariabel = name)
+
+# setter sammen 
+common_cols <- intersect(colnames(hov.gruppe), colnames(tot.indeks))
+kpi=rbind(subset(hov.gruppe, select = common_cols), 
+          subset(tot.indeks, select = common_cols))
+kpi <- as_tibble(kpi)
+
+# rydder i katigoriske variabler
+kpi$konsumgruppe <- snakecase::to_any_case(kpi$konsumgruppe)
+kpi$statistikkvariabel <- snakecase::to_any_case(kpi$statistikkvariabel)
+
+kpi <- kpi %>% 
+  separate(måned, into=c("year", "month"), sep="M") %>%
+  mutate(dato = ymd(paste(year, month, "15"))) %>% 
+  pivot_wider(names_from = statistikkvariabel) %>% 
+  rename(vekter = konsumprisindeks_vekter, 
+         indeks = konsumprisindeks_2015_100) %>% 
+  filter(year >= 2012) %>% 
+  subset(select = -c(year,month))
+
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.cap="Utvikling i KPI og Elektrisitet og brensel"}
+
+kpi %>% 
+  select(konsumgruppe, dato, indeks, ) %>% 
+  filter(konsumgruppe == "totalindeks" | 
+           konsumgruppe == "elektrisitet_fyringsoljer_og_annet_brensel") %>% 
+  ggplot(., aes(x = dato, y = indeks, color = konsumgruppe)) +
+  geom_line() + 
+  labs(title = "Konsumprisindeks, januar 2012- desember 2022",
+       x = "Årstall" ,
+       y = "Nivå, juni 2015=100") +
+  theme(legend.position="bottom", legend.box = "horizontal") +
+  theme_economist() + labs(color = " ") + scale_color_discrete(labels = 
+                            c("Elektristet og brensel", "Totalindeks"))
+
+
+
+```
+
+__*I Figur 1 kan man se utvikling i nivå på elektriksitet og annet brensel fra Januar 2012 til desember 2022 sammen med totalindeksen som er den totale KPI-stigningen for alle varer og tjenester i markdet. Man kan se at energi-pris nivået er veldigt volatilt, men har hatt en stigende trend de siste to årene. Energinivået har en vekting på ca.4% i totalindeksen, og selv om energinivået er veldig volatilt, så slår det ikke nevneverdigt ut på totalindeksen pga. den lave vektingen.*__
+
+\newpage
+## Plot 2
+```{r, warning=FALSE, message=FALSE, fig.cap="12 månedersendring i prosent"}
+
+H2 <- kpi %>% filter(konsumgruppe == 
+                       "elektrisitet_fyringsoljer_og_annet_brensel") %>%
+  mutate(endring = bidrag - lag(bidrag, 12)) %>%
+  select(dato, konsumgruppe, endring)
+P2 <- kpi %>% filter(konsumgruppe == "totalindeks") %>% 
+  rename(endring = `12_måneders_endring_prosent`) %>% 
+  select(dato, konsumgruppe, endring)
+plot2 <- rbind(H2, P2)
+
+plot2 %>% 
+  ggplot(.,aes(x= dato, y= endring, col=konsumgruppe)) + 
+  geom_line() + theme_economist() +
+  labs(title = "Endring i energi og KPI",
+        y = "Endring i %",
+        x = "Årstall") + labs(color = " ") + scale_color_discrete(labels = c("elektrsitet og brensel", "Totalindeks"))
+
+  
+```
+
+__*I dette plottet kan man se 12 måndersprosentvisendring i totalindeksen og i bidraget fra elektriste tog brensel. Her kan man se at det er korrelasjon mellom endringen i totalindeksen og bidraget til elektristet og brensel, som følger hverandre, men elektrsitet og brensel er på nivå under og over 0% endring i perioder, men de siste 12 måndene har hatt en stigining sammen med totalindeksen, noe som viser at bidraget fra endringen i elektristet og brensel påvirker totalindeksen i stor grad. Tidligere har ikke svingene i energi og brensel påvirket totalindeksen i like stor grad, men siden det er unntakstilstander i strømmarkedet så er det dirkte bidraget stort.*__
+
+
+----
+
+## Plot 3
+```{r}
+url1 <- "https://data.ssb.no/api/v0/no/table/05327/"
+kpi_data <-'{"query":[{"code": "Konsumgrp","selection":{"filter": "item","values":
+["JA_TOTAL","JAE_TOTAL"]}}],"response":{"format": "json-stat2"}}'
+
+kpi_data <- POST(url1 , body = kpi_data, encode = "json", verbose())
+kpi_data <- fromJSONstat(content(kpi_data, "text")) 
+
+kpi_data <- kpi_data %>%
+  as_tibble() %>%
+  separate(måned, into=c("year", "month"), sep="M") %>% 
+  mutate(dato = ymd(paste(year, month, "15"))) %>%
+  filter(year >= 2012) %>% 
+  select(-c(month, year)) %>% 
+  pivot_wider(names_from = statistikkvariabel) %>% 
+  clean_names() %>% 
+  select(dato, konsumgruppe, indeks = contains("kpi_ja_kpi_jae"),
+         månders_endring = starts_with("x12"))
+
+kpi_data %>% 
+  ggplot(aes(x=dato, y=månders_endring, color = konsumgruppe)) +
+  geom_line() +
+  theme_economist() +
+  ggtitle("Konsumprisindeks, januar 2012- febraur 2022") +
+  labs(x="Tid", y="Nivå, juni 2015=100")  
+
+
+```
+
+__**I dette plottet kan man se det direkte bidraget fra kraftprisene på KPI. KPI-JEA viser totalindeksen uten energi og brensel, mens KPI-JA viser totalindeksen inkl. energi og brensel. Det man kan se er at over lengre tid så har ikke energi og brensel nivået påvirket totalindeksen nevneverdigt, men den siste perioden så er det energi og brensel nivået bidratt til KPI-veksten, noe man ser klart når man ser på forskjellen mellom totalindeksene.**__
+
+
+---
+
+
+# 5.2 Kjerneinflasjon: Kraftprisens indirekte bidrag
+
+**Et av de viktigste konkurransefortrinnet Norge sitt næringsliv har hatt er tilgang til stabil og rimelig kraft, samtidig som at forutsetningene om billig kraft var uendret. Nå som detter er endret gir det en stor usikkerhet i næringslivet og for privatøkonomien. Denne usikkerheten gir næringslivet som har hatt sitt konkurransefortrinn med lav kraftpris stor hodepine, en rasjonell bedrift vil med et kostnadsjokk prøve å få mest mulig av kostanden over til konsumenten, noe som vil resultere i en prisøkning på produkt/tjeneste.I noen tilfeller vil energisjokket bli for stort til å kunne få over til konsumenten, sånn som skjedde med noen tomatbønder i Rogaland som ikke klarte å betjene energiregningen pga. Økt pris på strøm og gass og måtte legge ned for sesongen.** [^3](Jøssang, 2022)
+
+**På grunn av et etterspørselssjokk så har prisene har steget mye i råvaremarkedet som olje, gass, aluminium, stål og hvete. Økt import og produksjonskostnader gjør at det blir dyrere for bedrifter å fremstille sitt sluttprodukt noe som Orkla, som er en leverandør av merkevarer til dagligvarehandel og storhusholdning, har kjent på. De varslet i begynnelsen av 2022 at de vil kompensere de høye prisene på råvarer, ingrediensen, emballasje og frakt- energikostnader med å øke prisen til kunden, og vil justere prisene mer opp i kvartalene fremover.**[^4](Lorvik, 2022)
+
+**Den generelle prisstigningen i markedene  på kort sikter det konsumentene i størst grad får kjenne, noe som vil resultere i tapt kjøpekraft, eller reallønnsnedgang vis lønnsoppgjøret ikke står i stil til konsumprisveksten.** **Økning i land vil være kostbart og redusere konkurransefortrinnet til utlandet og må kompensere for økte kostnader ved å sette opp prisen på produkter/tjenester. Når det skjer slik i hele landet så vil da det bli enda mer prisstigning, noe som vil resultere til større press på prisene i markedet og igjen økt inflasjon.** 
+
+---
+
+# 5.3 Kjerneinflasjon:
+
+**Dagens priser på kraft vil vedvare ifølge Norges vassdrags-og energidirektorat i en lang tid. NVE sier at prisene vanligvis faller mye gjennom våren, men at det fortsatt ville være høyt prisnivå på strøm gjennom året. Selv om det er usikkerhet knyttet til prognosene så er det to faktorer som er avgjørende og det er om gassprisene vil holde seg høye, og om det blir mye snø og regn til neste vinter med den store etterspørslen av grønnenergi fra Europa.**  [^6](Tjoflot, Rønning, Tollersrud, 2022) **Hvor høy gassprisene kan bli er det vanskelig å sette pristak på mener Rystad Energy, fordi gassprisene er på et nivå hvor konsumenten slite med å betale, og siden pristaket er satt til hvor mye en kjøper er villig til å betale er det vanskelig å si hvor pristoppen er.** [^7](Blaker, 2021)
+
+**Det prisnivået på energi og brensel er veldig volatil og markedet vil generellt på kort sikt ikke prise det inn i sine produkter/tjenester. Siden oppgangen i energi og brensel har vært høyere og brattere enn det markedet klarer og ta inn over seg, så vil prisene på lang sikt stige. Grunnen for at det vil bli en økning på pris er fordi marginalkostanden vil øke med med at innstatsfaktorene øker.** 
+
+
+--- 
+
+# Kildeliste:
+*[1] Energi Norge. (2022, 17. Mars) Kraftmarkedet hentet fra: https://www.energinorge.no/fornybarometeret/kraftmarkedet/*
+
+*[4] Lorvik, N. (2022, 14.februar). Kjempevekst for Orkla i fjerde kvartal – Nå varsler de flere prisøkninger. Nettavisen. Hentet fra: https://www.nettavisen.no/okonomi/kjempevekst-for-orkla-i-fjerde-kvartal-na-varsler-de-flere-prisokninger/s/12-95-3424242408*
+
+
+*[3] Jøssang, T. (2022, 17.Januar). Energisjokket: 7-8 tomatbønder gir opp- andre bytter til fyring og propan. Stavanger Aftenblad. Hentet fra: https://www.aftenbladet.no/lokalt/i/G381y9/energisjokket-78-tomatboender-gir-opp-andre-bytter-til-fyring-med-p*
+
+*[6]Tjoflot, E. Rønning, I. Tollersrud, T. (2022, 8.februar). NVE varsler høye strømpriser. NRK, nyheter. Hentet fra: https://www.nrk.no/norge/nve-varsler-hoye-strompriser-ut-aret-1.15844598*
+
+*[7] Blaker, M. (2021, 11.november), Professor om strømkrisen: Det er en kjempe utfordring. Nettavisen. Hentet fra: https://www.nettavisen.no/okonomi/professor-om-stromkrisen-det-er-en-kjempeutfordring/f/5-95-332561*
+
+
+
+
